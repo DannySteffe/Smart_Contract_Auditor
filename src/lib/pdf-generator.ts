@@ -1,422 +1,244 @@
-// PDF Report Generator
-
 import jsPDF from 'jspdf';
-import { AnalysisResult } from '@/types';
-import { getEthTrustLevelDefinition } from './ethtrust';
-import { getSWCById } from './swc-registry';
+import { AnalysisResult } from '../types';
 
 export function generatePDFReport(result: AnalysisResult): void {
-  const doc = new jsPDF();
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const pageHeight = doc.internal.pageSize.getHeight();
-  let yPosition = 20;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
 
-  // Helper function to add new page if needed
-  const checkAndAddPage = (requiredSpace = 20) => {
-    if (yPosition + requiredSpace > pageHeight - 20) {
-      doc.addPage();
-      yPosition = 20;
-      return true;
-    }
-    return false;
+  const margin = 18;
+  const contentWidth = W - margin * 2;
+  const top = 18;
+  const bottom = H - 16;
+
+  let y = top;
+  let pageCount = 0;
+
+  const setFont = (size = 10, weight: 'normal' | 'bold' | 'italic' = 'normal') => {
+    const style = weight === 'italic' ? 'italic' : weight;
+    doc.setFont('times', style);
+    doc.setFontSize(size);
+    doc.setTextColor(0, 0, 0);
   };
 
-  // Helper function to add text with wrapping
-  const addWrappedText = (text: string, x: number, maxWidth: number, fontSize = 10) => {
-    doc.setFontSize(fontSize);
-    const lines = doc.splitTextToSize(text, maxWidth);
-    lines.forEach((line: string) => {
-      checkAndAddPage();
-      doc.text(line, x, yPosition);
-      yPosition += fontSize * 0.5;
+  const startPage = (subtitle: string) => {
+    if (pageCount > 0) doc.addPage();
+    pageCount += 1;
+    y = top;
+
+    const rightEdge = W - margin;
+
+    setFont(15, 'bold');
+    doc.text('SMART CONTRACT SECURITY AUDIT REPORT', margin, y);
+
+    setFont(9, 'normal');
+    doc.text(subtitle, rightEdge, y, { align: 'right' });
+
+    y += 6;
+    setFont(8, 'normal');
+    doc.text(`Analysis ID: ${result.analysisId}`, margin, y);
+    doc.text(`Date: ${new Date(result.timestamp).toLocaleString()}`, rightEdge, y, { align: 'right' });
+
+    y += 4;
+    doc.setDrawColor(90, 90, 90);
+    doc.setLineWidth(0.2);
+    doc.line(margin, y, W - margin, y);
+    y += 7;
+  };
+
+  const ensureSpace = (needed: number, subtitle = 'Continued') => {
+    if (y + needed > bottom) {
+      startPage(subtitle);
+    }
+  };
+
+  const section = (title: string) => {
+    ensureSpace(12);
+    setFont(12, 'bold');
+    doc.text(title, margin, y);
+    y += 4;
+    doc.setDrawColor(120, 120, 120);
+    doc.setLineWidth(0.2);
+    doc.line(margin, y, W - margin, y);
+    y += 6;
+  };
+
+  const writeWrapped = (
+    text: string,
+    opts?: {
+      size?: number;
+      weight?: 'normal' | 'bold' | 'italic';
+      indent?: number;
+      lineHeight?: number;
+      width?: number;
+      subtitle?: string;
+    },
+  ) => {
+    const size = opts?.size ?? 10;
+    const weight = opts?.weight ?? 'normal';
+    const indent = opts?.indent ?? 0;
+    const lineHeight = opts?.lineHeight ?? 5.1;
+    const width = opts?.width ?? (contentWidth - indent);
+    const subtitle = opts?.subtitle ?? 'Continued';
+
+    setFont(size, weight);
+    const lines = doc.splitTextToSize(text || '-', width) as string[];
+
+    lines.forEach((line) => {
+      ensureSpace(lineHeight + 1, subtitle);
+      doc.text(line, margin + indent, y);
+      y += lineHeight;
     });
   };
 
-  // Title with gradient effect simulation
-  doc.setFillColor(239, 246, 255); // Light blue background
-  doc.rect(0, 0, pageWidth, 35, 'F');
-  doc.setFontSize(26);
-  doc.setTextColor(37, 99, 235); // Blue
-  doc.setFont('helvetica', 'bold');
-  doc.text('SMART CONTRACT SECURITY AUDIT', pageWidth / 2, yPosition, { align: 'center' });
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.setTextColor(100, 116, 139);
-  doc.text('Comprehensive Security Analysis Report', pageWidth / 2, yPosition + 6, { align: 'center' });
-  yPosition += 20;
+  const writeKeyValue = (label: string, value: string) => {
+    const labelX = margin;
+    const labelWidth = 40;
+    const valueX = labelX + labelWidth + 2;
+    const valueText = value || '-';
 
-  // Contract Info with styled box
-  doc.setFillColor(248, 250, 252);
-  doc.setDrawColor(226, 232, 240);
-  doc.roundedRect(20, yPosition, pageWidth - 40, 22, 2, 2, 'FD');
-  doc.setFontSize(9);
-  doc.setTextColor(71, 85, 105);
-  doc.text(`📄 File: ${result.fileName}`, 25, yPosition + 6);
-  doc.text(`📅 Analysis Date: ${new Date(result.timestamp).toLocaleString()}`, 25, yPosition + 12);
-  doc.text(`🔑 Analysis ID: ${result.analysisId}`, 25, yPosition + 18);
-  yPosition += 28;
+    setFont(9.5, 'bold');
+    const labelLines = doc.splitTextToSize(`${label}:`, labelWidth) as string[];
 
-  // Divider
-  doc.setDrawColor(200, 200, 200);
-  doc.line(20, yPosition, pageWidth - 20, yPosition);
-  yPosition += 10;
+    setFont(9.5, 'normal');
+    const valueLines = doc.splitTextToSize(valueText, W - margin - valueX) as string[];
 
-  // === EXECUTIVE SUMMARY ===
-  doc.setFontSize(18);
-  doc.setTextColor(15, 23, 42);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Executive Summary', 20, yPosition);
-  doc.setFont('helvetica', 'normal');
-  yPosition += 12;
+    const rowLines = Math.max(labelLines.length, valueLines.length);
+    const rowHeight = rowLines * 5 + 2;
 
-  // Security Score Box with enhanced styling
-  const scoreColor: [number, number, number] = result.securityScore >= 80 ? [34, 197, 94] : result.securityScore >= 60 ? [234, 179, 8] : result.securityScore >= 40 ? [251, 146, 60] : [239, 68, 68];
-  const scoreBgColor: [number, number, number] = result.securityScore >= 80 ? [240, 253, 244] : result.securityScore >= 60 ? [254, 252, 232] : result.securityScore >= 40 ? [255, 247, 237] : [254, 242, 242];
-  
-  doc.setFillColor(scoreBgColor[0], scoreBgColor[1], scoreBgColor[2]);
-  doc.setDrawColor(scoreColor[0], scoreColor[1], scoreColor[2]);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(20, yPosition, 85, 40, 4, 4, 'FD');
-  doc.setLineWidth(0.2);
-  
-  doc.setFontSize(11);
-  doc.setTextColor(71, 85, 105);
-  doc.text('Security Score', 30, yPosition + 10);
-  doc.setFontSize(32);
-  doc.setTextColor(scoreColor[0], scoreColor[1], scoreColor[2]);
-  doc.setFont('helvetica', 'bold');
-  doc.text(`${result.securityScore}`, 62, yPosition + 28, { align: 'center' });
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.setTextColor(100, 116, 139);
-  doc.text('/100', 72, yPosition + 28);
+    ensureSpace(rowHeight + 1);
 
-  // Risk Level Box with enhanced styling
-  const riskColor: [number, number, number] = result.riskLevel === 'Critical' ? [220, 38, 38] : result.riskLevel === 'High' ? [245, 158, 11] : result.riskLevel === 'Medium' ? [234, 179, 8] : [34, 197, 94];
-  const riskBgColor: [number, number, number] = result.riskLevel === 'Critical' ? [254, 242, 242] : result.riskLevel === 'High' ? [255, 247, 237] : result.riskLevel === 'Medium' ? [254, 252, 232] : [240, 253, 244];
-  
-  doc.setFillColor(riskBgColor[0], riskBgColor[1], riskBgColor[2]);
-  doc.setDrawColor(riskColor[0], riskColor[1], riskColor[2]);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(110, yPosition, 80, 40, 4, 4, 'FD');
-  doc.setLineWidth(0.2);
-  
-  doc.setFontSize(11);
-  doc.setTextColor(71, 85, 105);
-  doc.text('Risk Assessment', 120, yPosition + 10);
-  doc.setFontSize(18);
-  doc.setTextColor(riskColor[0], riskColor[1], riskColor[2]);
-  doc.setFont('helvetica', 'bold');
-  doc.text(result.riskLevel.toUpperCase(), 150, yPosition + 26, { align: 'center' });
-  doc.setFont('helvetica', 'normal');
-  yPosition += 50;
+    setFont(9.5, 'bold');
+    doc.text(labelLines, labelX, y);
 
-  // EthTrust Level with enhanced styling
-  const ethTrustDef = getEthTrustLevelDefinition(result.ethTrustLevel);
-  const ethTrustColor: [number, number, number] = result.ethTrustLevel >= 4 ? [34, 197, 94] : result.ethTrustLevel >= 3 ? [234, 179, 8] : [239, 68, 68];
-  const ethTrustBgColor: [number, number, number] = result.ethTrustLevel >= 4 ? [240, 253, 244] : result.ethTrustLevel >= 3 ? [254, 252, 232] : [254, 242, 242];
-  
-  doc.setFillColor(ethTrustBgColor[0], ethTrustBgColor[1], ethTrustBgColor[2]);
-  doc.setDrawColor(ethTrustColor[0], ethTrustColor[1], ethTrustColor[2]);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(20, yPosition, pageWidth - 40, 35, 4, 4, 'FD');
-  doc.setLineWidth(0.2);
-  
-  doc.setFontSize(13);
-  doc.setTextColor(ethTrustColor[0], ethTrustColor[1], ethTrustColor[2]);
-  doc.setFont('helvetica', 'bold');
-  doc.text(`EthTrust Security Level: ${ethTrustDef.level}`, 30, yPosition + 10);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(10);
-  doc.setTextColor(71, 85, 105);
-  doc.text(`${ethTrustDef.name} - ${ethTrustDef.risk}`, 30, yPosition + 18);
-  doc.setFontSize(9);
-  doc.setTextColor(100, 116, 139);
-  const descLines = doc.splitTextToSize(ethTrustDef.description, pageWidth - 60);
-  doc.text(descLines[0], 30, yPosition + 26);
-  yPosition += 45;
+    setFont(9.5, 'normal');
+    doc.text(valueLines, valueX, y);
 
-  // === VULNERABILITY STATISTICS ===
-  checkAndAddPage(60);
-  doc.setFontSize(18);
-  doc.setTextColor(15, 23, 42);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Vulnerability Analysis', 20, yPosition);
-  doc.setFont('helvetica', 'normal');
-  yPosition += 12;
+    y += rowHeight + 1;
+  };
 
-  const stats = [
-    { label: 'Total Issues', count: result.statistics.total, color: [71, 85, 105], bgColor: [248, 250, 252] },
-    { label: 'Critical', count: result.statistics.critical, color: [220, 38, 38], bgColor: [254, 242, 242] },
-    { label: 'High', count: result.statistics.high, color: [245, 158, 11], bgColor: [255, 247, 237] },
-    { label: 'Medium', count: result.statistics.medium, color: [234, 179, 8], bgColor: [254, 252, 232] },
-    { label: 'Low', count: result.statistics.low, color: [59, 130, 246], bgColor: [239, 246, 255] },
-    { label: 'Info', count: result.statistics.info, color: [107, 114, 128], bgColor: [249, 250, 251] }
+  const summarize = (text: string, max: number) => {
+    if (!text) return '-';
+    return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+  };
+
+  const rank: Record<string, number> = { Critical: 5, High: 4, Medium: 3, Low: 2, Info: 1 };
+  const prioritized = [...result.vulnerabilities].sort((a, b) => (rank[b.severity] || 0) - (rank[a.severity] || 0));
+  const failedControls = result.scsvCompliance.checklist.filter((c) => !c.passed);
+
+  startPage('Executive Summary');
+
+  section('1. Executive Assessment');
+  writeWrapped(
+    'This report presents a structured security evaluation of the smart contract. Findings are prioritized by severity, exploitability, and confidence to support remediation planning and release decisions.',
+    { size: 10, lineHeight: 5.4 },
+  );
+  y += 3;
+
+  section('2. Engagement Details');
+  writeKeyValue('Target Contract', result.fileName);
+  writeKeyValue('Language', result.language || 'Auto-detected');
+  writeKeyValue('Risk Level', result.riskLevel);
+  writeKeyValue('Security Score', `${result.securityScore}/100`);
+  writeKeyValue('Total Findings', `${result.statistics.total}`);
+  writeKeyValue('Analysis Time', `${(result.analysisTime / 1000).toFixed(2)} seconds`);
+  y += 3;
+
+  section('3. Vulnerability Breakdown');
+  const total = Math.max(result.statistics.total, 1);
+  const breakdown: Array<[string, number, string]> = [
+    ['Critical', result.statistics.critical, 'Immediate remediation required before deployment.'],
+    ['High', result.statistics.high, 'Must be closed before release approval.'],
+    ['Medium', result.statistics.medium, 'Address in near-term hardening sprint.'],
+    ['Low', result.statistics.low, 'Track and close through standard backlog.'],
+    ['Info', result.statistics.info, 'Informational improvement opportunities.'],
   ];
 
-  stats.forEach((stat, index) => {
-    const col = index % 3;
-    const row = Math.floor(index / 3);
-    const x = 20 + col * 57;
-    const y = yPosition + row * 22;
-    
-    // Styled stat box
-    doc.setFillColor(stat.bgColor[0], stat.bgColor[1], stat.bgColor[2]);
-    doc.setDrawColor(stat.color[0], stat.color[1], stat.color[2]);
-    doc.setLineWidth(0.3);
-    doc.roundedRect(x, y, 53, 18, 2, 2, 'FD');
-    doc.setLineWidth(0.2);
-    
-    doc.setFontSize(9);
-    doc.setTextColor(100, 116, 139);
-    doc.text(stat.label, x + 4, y + 6);
-    
-    doc.setFontSize(16);
-    doc.setTextColor(stat.color[0], stat.color[1], stat.color[2]);
-    doc.setFont('helvetica', 'bold');
-    doc.text(stat.count.toString(), x + 45, y + 13, { align: 'right' });
-    doc.setFont('helvetica', 'normal');
+  breakdown.forEach(([severity, count, note]) => {
+    const share = `${Math.round((count / total) * 100)}%`;
+    writeWrapped(`${severity}: ${count} (${share}) - ${note}`, { size: 9.5, lineHeight: 5 });
   });
-  yPosition += 50;
+  y += 3;
 
-  // === SCSVS COMPLIANCE ===
-  checkAndAddPage(40);
-  doc.setFontSize(18);
-  doc.setTextColor(15, 23, 42);
-  doc.setFont('helvetica', 'bold');
-  doc.text('SCSVS v2 Compliance', 20, yPosition);
-  doc.setFont('helvetica', 'normal');
-  yPosition += 12;
+  section('4. Standards Snapshot');
+  writeKeyValue(
+    'SCSVS Compliance',
+    `${result.scsvCompliance.percentage}% (${result.scsvCompliance.passed} passed / ${result.scsvCompliance.failed} failed)`,
+  );
+  writeKeyValue('EthTrust', `${result.ethTrustLevel}/5`);
+  writeWrapped('Only failed SCSVS controls are listed in detail to keep this report actionable and concise.', {
+    size: 9,
+    lineHeight: 5,
+  });
 
-  const complianceColor: [number, number, number] = result.scsvCompliance.percentage >= 90 ? [34, 197, 94] : result.scsvCompliance.percentage >= 70 ? [234, 179, 8] : [239, 68, 68];
-  const complianceBg: [number, number, number] = result.scsvCompliance.percentage >= 90 ? [240, 253, 244] : result.scsvCompliance.percentage >= 70 ? [254, 252, 232] : [254, 242, 242];
-  
-  doc.setFillColor(complianceBg[0], complianceBg[1], complianceBg[2]);
-  doc.setDrawColor(complianceColor[0], complianceColor[1], complianceColor[2]);
-  doc.setLineWidth(0.5);
-  doc.roundedRect(20, yPosition, pageWidth - 40, 28, 4, 4, 'FD');
-  doc.setLineWidth(0.2);
-  
-  doc.setFontSize(12);
-  doc.setTextColor(complianceColor[0], complianceColor[1], complianceColor[2]);
-  doc.setFont('helvetica', 'bold');
-  doc.text(`${result.scsvCompliance.percentage}% Compliant`, 30, yPosition + 10);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.setTextColor(71, 85, 105);
-  doc.text(`Passed: ${result.scsvCompliance.passed} checks | Failed: ${result.scsvCompliance.failed} checks`, 30, yPosition + 18);
-  
-  // Enhanced progress bar
-  const barWidth = pageWidth - 60;
-  const barX = 30;
-  const barY = yPosition + 22;
-  doc.setFillColor(229, 231, 235);
-  doc.roundedRect(barX, barY, barWidth, 4, 2, 2, 'F');
-  doc.setFillColor(complianceColor[0], complianceColor[1], complianceColor[2]);
-  doc.roundedRect(barX, barY, (barWidth * result.scsvCompliance.percentage) / 100, 4, 2, 2, 'F');
-  yPosition += 38;
+  startPage('Detailed Findings and Controls');
 
-  // === VULNERABILITIES DETAIL ===
-  if (result.vulnerabilities.length > 0) {
-    checkAndAddPage(50);
-    doc.setFontSize(18);
-    doc.setTextColor(15, 23, 42);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Detailed Vulnerability Report', 20, yPosition);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.setTextColor(100, 116, 139);
-    doc.text(`${result.vulnerabilities.length} issue${result.vulnerabilities.length > 1 ? 's' : ''} detected and analyzed`, 20, yPosition + 6);
-    yPosition += 15;
-
-    // Group by severity
-    const criticalVulns = result.vulnerabilities.filter(v => v.severity === 'Critical');
-    const highVulns = result.vulnerabilities.filter(v => v.severity === 'High');
-    const mediumVulns = result.vulnerabilities.filter(v => v.severity === 'Medium');
-    const lowVulns = result.vulnerabilities.filter(v => v.severity === 'Low');
-
-    const vulnGroups = [
-      { label: 'Critical Vulnerabilities', vulns: criticalVulns, color: [220, 38, 38] },
-      { label: 'High Severity Vulnerabilities', vulns: highVulns, color: [245, 158, 11] },
-      { label: 'Medium Severity Vulnerabilities', vulns: mediumVulns, color: [234, 179, 8] },
-      { label: 'Low Severity Vulnerabilities', vulns: lowVulns, color: [59, 130, 246] }
-    ];
-
-    vulnGroups.forEach(group => {
-      if (group.vulns.length > 0) {
-        checkAndAddPage(30);
-        
-        const isCritical = group.label.includes('Critical');
-        
-        // Section header with colored background
-        if (isCritical) {
-          doc.setFillColor(254, 242, 242); // Light red background for critical
-          doc.roundedRect(20, yPosition - 2, pageWidth - 40, 12, 2, 2, 'F');
-        }
-        
-        doc.setFontSize(14);
-        doc.setTextColor(group.color[0], group.color[1], group.color[2]);
-        doc.setFont('helvetica', 'bold');
-        doc.text(`${group.label} (${group.vulns.length})`, 25, yPosition + 6);
-        doc.setFont('helvetica', 'normal');
-        yPosition += 15;
-
-        group.vulns.forEach((vuln, index) => {
-          checkAndAddPage(55);
-          
-          // Vulnerability box with colored border for critical
-          const boxHeight = 50;
-          
-          if (isCritical) {
-            // Red border and light red background for critical
-            doc.setFillColor(254, 242, 242);
-            doc.setDrawColor(220, 38, 38);
-            doc.setLineWidth(0.8);
-            doc.roundedRect(20, yPosition, pageWidth - 40, boxHeight, 3, 3, 'FD');
-            doc.setLineWidth(0.2);
-          } else {
-            // Standard styling for non-critical
-            doc.setFillColor(249, 250, 251);
-            doc.setDrawColor(209, 213, 219);
-            doc.roundedRect(20, yPosition, pageWidth - 40, boxHeight, 3, 3, 'FD');
-          }
-          
-          // Severity badge
-          const badgeWidth = 18;
-          const badgeHeight = 6;
-          doc.setFillColor(group.color[0], group.color[1], group.color[2]);
-          doc.roundedRect(25, yPosition + 4, badgeWidth, badgeHeight, 1, 1, 'F');
-          doc.setFontSize(7);
-          doc.setTextColor(255, 255, 255);
-          doc.text(vuln.severity.toUpperCase(), 25 + badgeWidth/2, yPosition + 7.5, { align: 'center' });
-          
-          // Title
-          doc.setFontSize(11);
-          doc.setTextColor(0, 0, 0);
-          doc.setFont('helvetica', 'bold');
-          doc.text(`${vuln.name}`, 46, yPosition + 8);
-          doc.setFont('helvetica', 'normal');
-          
-          // Metadata
-          doc.setFontSize(8);
-          doc.setTextColor(107, 114, 128);
-          doc.text(`${vuln.swcId} • Line ${vuln.lineNumber} • Detected by ${vuln.detectionMethod}`, 25, yPosition + 15);
-          
-          // Description
-          doc.setFontSize(9);
-          doc.setTextColor(55, 65, 81);
-          const descLines = doc.splitTextToSize(vuln.description.substring(0, 200), pageWidth - 50);
-          doc.text(descLines.slice(0, 2), 25, yPosition + 22);
-          
-          // Recommendation with icon
-          doc.setFontSize(8);
-          doc.setTextColor(16, 185, 129);
-          doc.setFont('helvetica', 'bold');
-          doc.text('✓ RECOMMENDED FIX:', 25, yPosition + 37);
-          doc.setFont('helvetica', 'normal');
-          doc.setFontSize(8);
-          const recLines = doc.splitTextToSize(vuln.recommendation.substring(0, 150), pageWidth - 50);
-          doc.text(recLines[0], 25, yPosition + 43);
-          
-          yPosition += boxHeight + 6;
-        });
-        
-        yPosition += 8;
-      }
-    });
+  section('5. Prioritized Findings');
+  if (prioritized.length === 0) {
+    writeWrapped('No vulnerabilities were identified in this analysis run.', { size: 10 });
   } else {
-    checkAndAddPage(40);
-    doc.setFontSize(18);
-    doc.setTextColor(15, 23, 42);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Detailed Vulnerability Report', 20, yPosition);
-    yPosition += 10;
-    
-    // Success box
-    doc.setFillColor(240, 253, 244); // Light green background
-    doc.setDrawColor(34, 197, 94); // Green border
-    doc.setLineWidth(0.5);
-    doc.roundedRect(20, yPosition, pageWidth - 40, 30, 3, 3, 'FD');
-    
-    // Success icon and text
-    doc.setFontSize(14);
-    doc.setTextColor(22, 163, 74);
-    doc.setFont('helvetica', 'bold');
-    doc.text('✓ No Vulnerabilities Detected', 30, yPosition + 12);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.setTextColor(21, 128, 61);
-    doc.text('This smart contract passed all security checks with no issues found.', 30, yPosition + 21);
-    
-    yPosition += 35;
+    prioritized.slice(0, 3).forEach((v, idx) => {
+      ensureSpace(30);
+      writeWrapped(`${idx + 1}. ${summarize(v.name, 95)}`, { size: 10.5, weight: 'bold', lineHeight: 5.4 });
+      writeWrapped(
+        `Severity: ${v.severity} | SWC: ${v.swcId || 'N/A'} | Line: ${v.lineNumber} | Confidence: ${v.confidence}`,
+        { size: 9.2, lineHeight: 5 },
+      );
+      writeWrapped(`Issue: ${summarize(v.description, 240)}`, { size: 9.2, indent: 2, lineHeight: 5 });
+      writeWrapped(`Recommended Fix: ${summarize(v.recommendation, 220)}`, { size: 9.2, indent: 2, lineHeight: 5 });
+
+      y += 2;
+      doc.setDrawColor(150, 150, 150);
+      doc.setLineWidth(0.2);
+      doc.line(margin, y, W - margin, y);
+      y += 5;
+    });
   }
 
-  // === RECOMMENDATIONS ===
-  checkAndAddPage(50);
-  doc.setFontSize(18);
-  doc.setTextColor(15, 23, 42);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Security Recommendations', 20, yPosition);
-  doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
-  doc.setTextColor(100, 116, 139);
-  doc.text('Best practices to enhance smart contract security', 20, yPosition + 6);
-  yPosition += 15;
+  section('6. Failed SCSVS v2 Controls');
+  if (failedControls.length === 0) {
+    writeWrapped('No failed SCSVS controls detected.', { size: 10 });
+  } else {
+    failedControls.slice(0, 5).forEach((control, idx) => {
+      ensureSpace(18);
+      writeWrapped(`${idx + 1}. ${control.controlId} - ${summarize(control.title, 88)}`, {
+        size: 9.6,
+        weight: 'bold',
+        lineHeight: 5.1,
+      });
 
-  result.recommendations.forEach((rec, index) => {
-    const estimatedHeight = Math.ceil(rec.length / 90) * 6 + 12;
-    checkAndAddPage(estimatedHeight);
-    
-    // Recommendation box
-    const boxStartY = yPosition;
-    doc.setFillColor(249, 250, 251); // Light gray background
-    doc.setDrawColor(59, 130, 246); // Blue border
-    doc.setLineWidth(0.3);
-    
-    // Calculate box height
-    const recLines = doc.splitTextToSize(rec, pageWidth - 60);
-    const boxHeight = recLines.length * 5 + 8;
-    doc.roundedRect(20, yPosition, pageWidth - 40, boxHeight, 2, 2, 'FD');
-    
-    // Number badge
-    doc.setFillColor(59, 130, 246);
-    doc.circle(28, yPosition + 6, 3, 'F');
-    doc.setFontSize(8);
-    doc.setTextColor(255, 255, 255);
-    doc.setFont('helvetica', 'bold');
-    doc.text(`${index + 1}`, 28, yPosition + 7, { align: 'center' });
-    
-    // Recommendation text
-    doc.setFontSize(9);
-    doc.setTextColor(51, 65, 85);
-    doc.setFont('helvetica', 'normal');
-    recLines.forEach((line: string, lineIndex: number) => {
-      doc.text(line, 35, yPosition + 7 + (lineIndex * 5));
+      const detail = control.findings?.[0] || 'Control failed and requires remediation evidence.';
+      writeWrapped(`Detail: ${summarize(detail, 170)}`, { size: 9, indent: 2, lineHeight: 4.9 });
+      y += 1;
     });
-    
-    yPosition += boxHeight + 4;
+  }
+
+  section('7. Recommended Remediation Plan');
+  const actions = result.recommendations.length > 0
+    ? result.recommendations.slice(0, 5)
+    : [
+        'Resolve all Critical and High findings before deployment approval.',
+        'Re-run analysis after fixes and validate closure evidence.',
+        'Treat failed controls as release blockers until verification is complete.',
+      ];
+
+  actions.forEach((action, idx) => {
+    ensureSpace(10);
+    writeWrapped(`${idx + 1}. ${action}`, { size: 9.5, lineHeight: 5.2 });
   });
 
-  // === FOOTER ===
-  const totalPages = doc.getNumberOfPages();
-  for (let i = 1; i <= totalPages; i++) {
-    doc.setPage(i);
-    
-    // Footer separator line
-    doc.setDrawColor(226, 232, 240);
-    doc.setLineWidth(0.5);
-    doc.line(20, pageHeight - 20, pageWidth - 20, pageHeight - 20);
-    
-    // Footer text
-    doc.setFontSize(8);
-    doc.setTextColor(148, 163, 184);
-    doc.setFont('helvetica', 'normal');
-    const footerText = `Generated by SmartAudit AI | Page ${i} of ${totalPages} | ${new Date().toLocaleDateString()}`;
-    doc.text(footerText, pageWidth / 2, pageHeight - 12, { align: 'center' });
+  const pages = doc.getNumberOfPages();
+  for (let p = 1; p <= pages; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(120, 120, 120);
+    doc.setLineWidth(0.2);
+    doc.line(margin, H - 12, W - margin, H - 12);
+
+    setFont(8, 'normal');
+    doc.text('Confidential - SmartAudit AI Security Assessment', margin, H - 7);
+    doc.text(`Page ${p} of ${pages}`, W - margin, H - 7, { align: 'right' });
   }
 
-  // Save the PDF
-  const fileName = `security-report-${result.fileName.replace('.sol', '')}-${new Date().toISOString().split('T')[0]}.pdf`;
-  doc.save(fileName);
+  const baseFileName = result.fileName.replace(/\.[^/.]+$/, '');
+  doc.save(`${baseFileName}-security-report.pdf`);
 }
-
