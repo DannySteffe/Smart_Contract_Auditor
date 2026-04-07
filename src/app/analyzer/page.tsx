@@ -19,6 +19,52 @@ export default function AnalyzerPage() {
   const [githubRepoLink, setGithubRepoLink] = useState('');
   const [activeTab, setActiveTab] = useState<'paste' | 'upload'>('paste');
 
+  const runAnalysis = async (codeToAnalyze: string, targetFileName: string): Promise<void> => {
+    // Stage 1: Parsing contract
+    setProgress(25);
+    await new Promise(resolve => setTimeout(resolve, 250));
+
+    // Stage 2: Static analysis - Pattern detection
+    setProgress(40);
+    await new Promise(resolve => setTimeout(resolve, 250));
+
+    // Stage 3: Static analysis - SWC Registry check
+    setProgress(55);
+
+    const response = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contractCode: codeToAnalyze,
+        fileName: targetFileName,
+        analysisTypes: ['static', 'ai', 'standards'],
+        severity: 'all'
+      })
+    });
+
+    // Stage 4: Dynamic analysis - AI reasoning
+    setProgress(70);
+    await new Promise(resolve => setTimeout(resolve, 300));
+
+    // Stage 5: Dynamic analysis - Logic evaluation
+    setProgress(82);
+
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null);
+      throw new Error(errorBody?.error || 'Analysis failed');
+    }
+
+    const result = await response.json();
+
+    // Stage 6: Standards compliance check
+    setProgress(92);
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    // Complete
+    setProgress(100);
+    setAnalysisResult(result);
+  };
+
   const handleAnalyze = async () => {
     if (!contractCode.trim()) {
       setError('Please enter contract code');
@@ -30,52 +76,7 @@ export default function AnalyzerPage() {
     setProgress(0);
 
     try {
-      // Stage 1: Parsing contract
-      setProgress(10);
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      // Stage 2: Static analysis - Pattern detection
-      setProgress(25);
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      // Stage 3: Static analysis - SWC Registry check
-      setProgress(40);
-
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contractCode,
-          fileName,
-          analysisTypes: ['static', 'ai', 'standards'],
-          severity: 'all'
-        })
-      });
-
-      // Stage 4: Dynamic analysis - AI reasoning
-      setProgress(55);
-      await new Promise(resolve => setTimeout(resolve, 400));
-      
-      // Stage 5: Dynamic analysis - Logic evaluation
-      setProgress(70);
-
-      if (!response.ok) {
-        throw new Error('Analysis failed');
-      }
-
-      const result = await response.json();
-      
-      // Stage 6: Standards compliance check
-      setProgress(85);
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      // Stage 7: Generating comprehensive report
-      setProgress(95);
-      await new Promise(resolve => setTimeout(resolve, 200));
-      
-      // Complete
-      setProgress(100);
-      setAnalysisResult(result);
+      await runAnalysis(contractCode, fileName);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Analysis failed');
     } finally {
@@ -111,17 +112,38 @@ export default function AnalyzerPage() {
 
     setIsAnalyzing(true);
     setError(null);
-    setProgress(10);
+    setProgress(8);
 
     try {
-      setProgress(30);
-      // TODO: Implement GitHub repo fetching logic
-      setError('GitHub repository analysis coming soon!');
-      setProgress(0);
+      setProgress(15);
+      const repositoryResponse = await fetch('/api/github/repository', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ githubUrl: githubRepoLink })
+      });
+
+      if (!repositoryResponse.ok) {
+        const errorBody = await repositoryResponse.json().catch(() => null);
+        throw new Error(errorBody?.error || 'Failed to fetch repository');
+      }
+
+      const repositoryResult = await repositoryResponse.json();
+      const fetchedCode: string = repositoryResult.contractCode || '';
+      const fetchedFileName: string = repositoryResult.fileName || 'contract.sol';
+
+      if (!fetchedCode.trim()) {
+        throw new Error('No smart contract files were found in this repository');
+      }
+
+      setContractCode(fetchedCode);
+      setFileName(fetchedFileName);
+
+      await runAnalysis(fetchedCode, fetchedFileName);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch repository');
+      setError(err instanceof Error ? err.message : 'GitHub repository analysis failed');
     } finally {
       setIsAnalyzing(false);
+      setTimeout(() => setProgress(0), 1000);
     }
   };
 
