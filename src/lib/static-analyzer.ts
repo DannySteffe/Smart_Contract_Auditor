@@ -57,6 +57,40 @@ export async function performStaticAnalysis(contractCode: string, fileName?: str
   return performSolidityAnalysis(contractCode);
 }
 
+// Helper function to validate if code looks like Solidity
+function isSolidityLike(code: string): boolean {
+  // Check for common Solidity patterns
+  const solidityIndicators = [
+    /pragma\s+solidity/i,
+    /\bcontract\s+\w+\s*\{/i,
+    /\bfunction\s+\w+\s*\(/i,
+    /\bmapping\s*\(/i,
+    /\bmsg\./,
+    /\bpayable\b/i
+  ];
+
+  const indicators = solidityIndicators.filter(pattern => pattern.test(code)).length;
+  
+  // Check for Cairo/Vyper patterns that would disqualify it as Solidity
+  const nonSolidityIndicators = [
+    /#\[starknet::contract\]/i,  // Cairo 1.0
+    /^mod\s+\w+\s*\{/m,           // Cairo module
+    /%lang\s+starknet/i,           // Cairo 0.x
+    /def\s+\w+\s*\(/m,             // Vyper functions
+    /@external\b|@internal\b|@view\b|@pure\b|@payable\b/i  // Modern decorators (Vyper/Cairo)
+  ];
+
+  const nonSolidityCount = nonSolidityIndicators.filter(pattern => pattern.test(code)).length;
+
+  // If it has non-Solidity indicators and few Solidity indicators, reject it
+  if (nonSolidityCount > 0 && indicators < 2) {
+    return false;
+  }
+
+  // Accept if it has at least some Solidity indicators
+  return indicators > 0;
+}
+
 async function performSolidityAnalysis(contractCode: string): Promise<StaticAnalysisResult> {
   const vulnerabilities: Vulnerability[] = [];
   const contractInfo = {
@@ -66,103 +100,79 @@ async function performSolidityAnalysis(contractCode: string): Promise<StaticAnal
     modifiers: [] as string[]
   };
 
+  const lines = contractCode.split('\n');
+  let astParsingSuccess = false;
+
   try {
-    // Parse the Solidity code
-    const ast = parser.parse(contractCode, { tolerant: true, loc: true });
+    // Validate that code looks like Solidity before parsing
+    if (!isSolidityLike(contractCode)) {
+      console.warn('Code does not appear to be Solidity, skipping AST parsing');
+      astParsingSuccess = false;
+    } else {
+      // Parse the Solidity code
+      const ast = parser.parse(contractCode, { tolerant: true, loc: true });
 
-    // Extract contract information
-    parser.visit(ast, {
-      ContractDefinition: (node: any) => {
-        contractInfo.name = node.name;
-      },
-      FunctionDefinition: (node: any) => {
-        if (node.name) {
-          contractInfo.functions.push(node.name);
+      // Extract contract information
+      parser.visit(ast, {
+        ContractDefinition: (node: any) => {
+          contractInfo.name = node.name;
+        },
+        FunctionDefinition: (node: any) => {
+          if (node.name) {
+            contractInfo.functions.push(node.name);
+          }
+        },
+        StateVariableDeclaration: (node: any) => {
+          // Extract state variable names
+          if (node.variables) {
+            node.variables.forEach((v: any) => {
+              if (v.name) {
+                contractInfo.stateVariables.push(v.name);
+              }
+            });
+          }
+        },
+        ModifierDefinition: (node: any) => {
+          if (node.name) {
+            contractInfo.modifiers.push(node.name);
+          }
         }
-      },
-      StateVariableDeclaration: (node: any) => {
-        // Extract state variable names
-        if (node.variables) {
-          node.variables.forEach((v: any) => {
-            if (v.name) {
-              contractInfo.stateVariables.push(v.name);
-            }
-          });
-        }
-      },
-      ModifierDefinition: (node: any) => {
-        if (node.name) {
-          contractInfo.modifiers.push(node.name);
-        }
-      }
-    });
+      });
 
-    // Run pattern-based vulnerability detection
-    const lines = contractCode.split('\n');
-    
-    for (const pattern of VULNERABILITY_PATTERNS) {
-      if (pattern.check(contractCode)) {
-        const matches = findPatternMatches(contractCode, pattern);
-        
-        for (const match of matches) {
-          const swc = getSWCById(pattern.swcId);
-          
-          vulnerabilities.push({
-            id: uuidv4(),
-            name: pattern.name,
-            type: pattern.swcId,
-            severity: pattern.severity,
-            swcId: pattern.swcId,
-            cweIds: swc?.cweIds || [],
-            scsvIds: pattern.scsvIds || [],
-            ethTrustImpact: getSeverityImpact(pattern.severity),
-            lineNumber: match.lineNumber,
-            lineRange: { start: match.lineNumber, end: match.lineNumber },
-            codeSnippet: getCodeContext(lines, match.lineNumber, 2),
-            description: swc?.description || pattern.description,
-            exploitationScenario: 'See detailed analysis',
-            recommendation: swc?.remediation || 'Review and fix this issue',
-            references: swc ? [`https://swcregistry.io/docs/${pattern.swcId}`] : [],
-            detectionMethod: 'static',
-            confidence: 'High'
-          });
-        }
-      }
+      astParsingSuccess = true;
     }
-
   } catch (error) {
-    console.error('Error during static analysis:', error);
-    // Continue with pattern-based analysis even if AST parsing fails
-    
-    const lines = contractCode.split('\n');
-    
-    for (const pattern of VULNERABILITY_PATTERNS) {
-      if (pattern.check(contractCode)) {
-        const matches = findPatternMatches(contractCode, pattern);
+    console.error('AST parsing error (continuing with pattern-based analysis):', error instanceof Error ? error.message : error);
+    astParsingSuccess = false;
+  }
+
+  // Run pattern-based vulnerability detection (always runs, regardless of AST parsing)
+  for (const pattern of VULNERABILITY_PATTERNS) {
+    if (pattern.check(contractCode)) {
+      const matches = findPatternMatches(contractCode, pattern);
+      
+      for (const match of matches) {
+        const swc = getSWCById(pattern.swcId);
         
-        for (const match of matches) {
-          const swc = getSWCById(pattern.swcId);
-          
-          vulnerabilities.push({
-            id: uuidv4(),
-            name: pattern.name,
-            type: pattern.swcId,
-            severity: pattern.severity,
-            swcId: pattern.swcId,
-            cweIds: swc?.cweIds || [],
-            scsvIds: pattern.scsvIds || [],
-            ethTrustImpact: getSeverityImpact(pattern.severity),
-            lineNumber: match.lineNumber,
-            lineRange: { start: match.lineNumber, end: match.lineNumber },
-            codeSnippet: getCodeContext(lines, match.lineNumber, 2),
-            description: swc?.description || pattern.description,
-            exploitationScenario: 'Requires detailed analysis',
-            recommendation: swc?.remediation || 'Review and apply best practices',
-            references: swc ? [`https://swcregistry.io/docs/${pattern.swcId}`] : [],
-            detectionMethod: 'static',
-            confidence: 'Medium'
-          });
-        }
+        vulnerabilities.push({
+          id: uuidv4(),
+          name: pattern.name,
+          type: pattern.swcId,
+          severity: pattern.severity,
+          swcId: pattern.swcId,
+          cweIds: swc?.cweIds || [],
+          scsvIds: pattern.scsvIds || [],
+          ethTrustImpact: getSeverityImpact(pattern.severity),
+          lineNumber: match.lineNumber,
+          lineRange: { start: match.lineNumber, end: match.lineNumber },
+          codeSnippet: getCodeContext(lines, match.lineNumber, 2),
+          description: swc?.description || pattern.description,
+          exploitationScenario: astParsingSuccess ? 'See detailed analysis' : 'Requires detailed analysis',
+          recommendation: swc?.remediation || 'Review and fix this issue',
+          references: swc ? [`https://swcregistry.io/docs/${pattern.swcId}`] : [],
+          detectionMethod: 'static',
+          confidence: astParsingSuccess ? 'High' : 'Medium'
+        });
       }
     }
   }

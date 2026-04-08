@@ -102,17 +102,36 @@ export const CAIRO_VULNERABILITY_PATTERNS: CairoVulnerabilityPattern[] = [
     csrId: 'CSR-004',
     detector: (code: string): boolean => {
       const lines = code.split('\n');
+      
+      // Public user functions that should be accessible to everyone (not privileged)
+      const publicUserFunctions = ['deposit', 'withdraw', 'transfer', 'approve', 'stake', 'unstake', 'claim', 'get_', 'is_'];
+      
       for (let i = 0; i < lines.length; i++) {
         if (/#\[external/.test(lines[i])) {
           // Look ahead for function definition
           let j = i + 1;
           while (j < lines.length && !lines[j].trim()) j++;
           
-          if (j < lines.length && /fn\s+(transfer|withdraw|mint|burn|set_|update_)/.test(lines[j])) {
-            // Check if there's access control
+          // Only check privileged functions (ownership, admin, emergency functions)
+          if (j < lines.length && /fn\s+(transfer_ownership|set_owner|update_owner|emergency|pause|unpause|mint|burn|set_\w+|update_\w+)/.test(lines[j])) {
+            const funcLine = lines[j];
+            
+            // Skip if it's a normal user function that matches our pattern
+            let isPublicUserFunc = false;
+            for (const publicFunc of publicUserFunctions) {
+              if (new RegExp(`fn\\s+\\w*${publicFunc}`).test(funcLine)) {
+                isPublicUserFunc = true;
+                break;
+              }
+            }
+            
+            if (isPublicUserFunc) continue;
+            
+            // Check if there's access control (expanded patterns)
             let foundAccessControl = false;
-            for (let k = j; k < Math.min(j + 15, lines.length); k++) {
-              if (/only_owner|assert.*==.*get_caller_address|Ownable::/.test(lines[k])) {
+            for (let k = j; k < Math.min(j + 20, lines.length); k++) {
+              // Recognize various access control patterns
+              if (/assert_only_owner|only_owner|assert.*owner.*==|assert.*caller.*==.*owner|Ownable::|assert.*get_caller_address\(\)\s*==|self\.assert_only/.test(lines[k])) {
                 foundAccessControl = true;
                 break;
               }
@@ -133,12 +152,36 @@ export const CAIRO_VULNERABILITY_PATTERNS: CairoVulnerabilityPattern[] = [
     csrId: 'CSR-005',
     detector: (code: string): boolean => {
       const lines = code.split('\n');
+      
+      // Functions where zero address checks are critical
+      const criticalFunctions = ['transfer_ownership', 'set_owner', 'update_owner', 'new_owner', 'recipient', 'to'];
+      
       for (let i = 0; i < lines.length; i++) {
-        if (/fn\s+\w+.*:\s*ContractAddress/.test(lines[i])) {
-          // Check if there's a zero address check
+        const line = lines[i];
+        
+        // Skip non-function lines (imports, storage fields, event fields, struct fields)
+        if (/use\s+|struct\s+Storage|struct\s+\w+\s*{|^\s*\w+:\s*ContractAddress,/.test(line)) {
+          continue;
+        }
+        
+        // Only check function parameters with ContractAddress
+        if (/fn\s+\w+.*\(.*:\s*ContractAddress/.test(line)) {
+          // Check if this is a critical function parameter
+          let isCriticalParam = false;
+          for (const critFunc of criticalFunctions) {
+            if (new RegExp(critFunc, 'i').test(line)) {
+              isCriticalParam = true;
+              break;
+            }
+          }
+          
+          if (!isCriticalParam) continue;
+          
+          // Check if there's a zero address check (expanded patterns and more lines)
           let hasZeroCheck = false;
-          for (let k = i; k < Math.min(i + 10, lines.length); k++) {
-            if (/assert|is_zero\(\)|is_non_zero\(\)|!=.*Zero/.test(lines[k])) {
+          for (let k = i; k < Math.min(i + 20, lines.length); k++) {
+            // Recognize various zero address check patterns
+            if (/assert\s*\(!.*\.is_zero\(\)|assert.*\.is_non_zero\(\)|assert.*!=.*zero_address|is_zero\(\).*false|!.*\.is_zero/.test(lines[k])) {
               hasZeroCheck = true;
               break;
             }
@@ -264,21 +307,39 @@ export const CAIRO_VULNERABILITY_PATTERNS: CairoVulnerabilityPattern[] = [
     csrId: 'CSR-010',
     detector: (code: string): boolean => {
       const lines = code.split('\n');
+      
+      // Functions that typically have built-in validation through balance checks
+      const autoValidatedFunctions = ['deposit', 'withdraw', 'transfer', 'get_', 'is_', 'view'];
+      
       for (let i = 0; i < lines.length; i++) {
         if (/#\[external/.test(lines[i])) {
           let j = i + 1;
           while (j < lines.length && !lines[j].trim()) j++;
           
           if (j < lines.length && /fn\s+\w+\(.*:\s*u256/.test(lines[j])) {
-            // Check for validation
+            const funcLine = lines[j];
+            
+            // Skip functions that have inherent validation
+            let hasInherentValidation = false;
+            for (const autoFunc of autoValidatedFunctions) {
+              if (new RegExp(`fn\\s+\\w*${autoFunc}`).test(funcLine)) {
+                hasInherentValidation = true;
+                break;
+              }
+            }
+            
+            // Check for validation (expanded range and patterns)
             let hasValidation = false;
-            for (let k = j; k < Math.min(j + 8, lines.length); k++) {
-              if (/assert|require|is_zero|>=|<=|>|</.test(lines[k])) {
+            for (let k = j; k < Math.min(j + 15, lines.length); k++) {
+              // More comprehensive validation patterns
+              if (/assert|require|is_zero|>=|<=|>|<|!=\s*0|balance.*>=/.test(lines[k])) {
                 hasValidation = true;
                 break;
               }
             }
-            if (!hasValidation) return true;
+            
+            // Only flag if no validation AND no inherent validation
+            if (!hasValidation && !hasInherentValidation) return true;
           }
         }
       }

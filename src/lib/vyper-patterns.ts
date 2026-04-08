@@ -113,17 +113,36 @@ export const VYPER_VULNERABILITY_PATTERNS: VyperVulnerabilityPattern[] = [
     pattern: /@external\s*\n\s*def/,
     detector: (code: string): boolean => {
       const lines = code.split('\n');
+      
+      // Functions that should be accessible to everyone (not privileged)
+      const publicUserFunctions = ['deposit', 'withdraw', 'transfer', 'approve', 'allowance', 'balance_of', 'total_supply', 'stake', 'unstake', 'claim'];
+      
       for (let i = 0; i < lines.length; i++) {
         if (/@external/.test(lines[i])) {
           // Look ahead for function definition
           let j = i + 1;
           while (j < lines.length && !lines[j].trim()) j++;
           
-          if (j < lines.length && /def\s+(transfer|withdraw|mint|burn|set|update)/.test(lines[j])) {
-            // Check if there's access control in the function
+          // Only check privileged functions
+          if (j < lines.length && /def\s+(transfer_ownership|set_owner|emergency|pause|unpause|mint|burn|set_|update_)/.test(lines[j])) {
+            const funcLine = lines[j];
+            
+            // Skip if it's a normal user function
+            let isPublicUserFunc = false;
+            for (const publicFunc of publicUserFunctions) {
+              if (new RegExp(`def\\s+${publicFunc}`).test(funcLine)) {
+                isPublicUserFunc = true;
+                break;
+              }
+            }
+            
+            if (isPublicUserFunc) continue;
+            
+            // Check if there's access control (expanded patterns)
             let foundAccessControl = false;
-            for (let k = j; k < Math.min(j + 10, lines.length); k++) {
-              if (/assert\s+msg\.sender\s*==|assert\s+self\.owner\s*==/.test(lines[k])) {
+            for (let k = j; k < Math.min(j + 15, lines.length); k++) {
+              // Recognize various access control patterns including helper functions
+              if (/assert\s+msg\.sender\s*==|assert\s+self\.owner\s*==|self\._only_owner\(|self\.assert_only_owner\(|@only_owner/.test(lines[k])) {
                 foundAccessControl = true;
                 break;
               }
@@ -144,16 +163,33 @@ export const VYPER_VULNERABILITY_PATTERNS: VyperVulnerabilityPattern[] = [
     pattern: /@external.*def.*\(.*:\s*address/,
     detector: (code: string): boolean => {
       const lines = code.split('\n');
+      
+      // Only check critical functions where zero address matters
+      const criticalFunctions = ['transfer_ownership', 'set_owner', 'update_owner', 'transfer_to', 'send_to'];
+      
       for (let i = 0; i < lines.length; i++) {
         if (/@external/.test(lines[i])) {
           let j = i + 1;
           while (j < lines.length && !lines[j].trim()) j++;
           
           if (j < lines.length && /def\s+\w+\([^)]*:\s*address/.test(lines[j])) {
-            // Check if there's a zero address check
+            const funcLine = lines[j];
+            
+            // Only check critical functions
+            let isCritical = false;
+            for (const critFunc of criticalFunctions) {
+              if (new RegExp(critFunc, 'i').test(funcLine)) {
+                isCritical = true;
+                break;
+              }
+            }
+            
+            if (!isCritical) continue;
+            
+            // Check if there's a zero address check (expanded range and patterns)
             let hasZeroCheck = false;
-            for (let k = j; k < Math.min(j + 5, lines.length); k++) {
-              if (/assert.*!=\s*ZERO_ADDRESS|assert.*!=\s*empty\(address\)/.test(lines[k])) {
+            for (let k = j; k < Math.min(j + 10, lines.length); k++) {
+              if (/assert.*!=\s*ZERO_ADDRESS|assert.*!=\s*empty\(address\)|assert.*!=\s*0x0|assert\s+\w+/.test(lines[k])) {
                 hasZeroCheck = true;
                 break;
               }

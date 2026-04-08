@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { performStaticAnalysis } from '@/lib/static-analyzer';
+import { detectLanguage, SmartContractLanguage } from '@/lib/language-detector';
 import { analyzeWithAI, enhanceVulnerabilityDescription } from '@/lib/groq-service';
 import { calculateEthTrustLevel, getEthTrustLevelDefinition } from '@/lib/ethtrust';
 import { SCSVS_V2_CONTROLS, calculateSCSVSCompliance } from '@/lib/scsvs-v2';
@@ -11,10 +12,42 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { contractCode, fileName, analysisTypes, severity } = body;
+    const validFileNamePattern = /^[^\\/:*?"<>|]+\.(sol|vy|cairo)$/i;
 
-    if (!contractCode) {
+    if (typeof contractCode !== 'string' || !contractCode.trim()) {
       return NextResponse.json(
-        { error: 'Contract code is required' },
+        { error: 'Contract code is required and must be a string' },
+        { status: 400 }
+      );
+    }
+
+    if (typeof fileName !== 'string' || !validFileNamePattern.test(fileName.trim())) {
+      return NextResponse.json(
+        { error: 'File name is required and must end with .sol, .vy, or .cairo' },
+        { status: 400 }
+      );
+    }
+
+    const normalizedFileName = fileName.trim();
+    const extension = normalizedFileName.split('.').pop()?.toLowerCase();
+    const extensionToLanguage: Record<string, SmartContractLanguage> = {
+      sol: 'solidity',
+      vy: 'vyper',
+      cairo: 'cairo'
+    };
+
+    const expectedLanguage = extension ? extensionToLanguage[extension] : undefined;
+    const detectedFromContent = detectLanguage(contractCode, normalizedFileName);
+
+    if (
+      expectedLanguage &&
+      detectedFromContent.language !== 'unknown' &&
+      detectedFromContent.language !== expectedLanguage
+    ) {
+      return NextResponse.json(
+        {
+          error: `File extension mismatch: provided .${extension} but code appears to be ${detectedFromContent.language}. Please use a matching extension.`
+        },
         { status: 400 }
       );
     }
@@ -141,7 +174,7 @@ export async function POST(request: NextRequest) {
       analysisId,
       timestamp: new Date().toISOString(),
       contractCode,
-      fileName: fileName || 'contract.sol',
+      fileName: normalizedFileName,
       language: detectedLanguage,
       securityScore,
       riskLevel,

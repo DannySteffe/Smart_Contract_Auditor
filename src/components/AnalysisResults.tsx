@@ -2,14 +2,12 @@
 
 import { useState } from 'react';
 import { AnalysisResult } from '@/types';
-import { Shield, AlertTriangle, FileText, BarChart3, Download, FileDown, File } from 'lucide-react';
+import { Shield, AlertTriangle, FileText, BarChart3, FileDown } from 'lucide-react';
 import OverviewDashboard from '@/components/OverviewDashboard';
 import VulnerabilitiesList from '@/components/VulnerabilitiesList';
 import SecurityStandards from '@/components/SecurityStandards';
 import AnalyticsDashboard from '@/components/AnalyticsDashboard';
-import { downloadJSON } from '@/lib/utils';
 import { generatePDFReport } from '@/lib/pdf-generator';
-import { generateTextReport } from '@/lib/doc-generator';
 
 interface AnalysisResultsProps {
   result: AnalysisResult;
@@ -25,22 +23,8 @@ export default function AnalysisResults({ result }: AnalysisResultsProps) {
     { id: 'analytics' as const, label: 'Analytics', icon: BarChart3 }
   ];
 
-  const handleDownloadJSON = () => {
-    const reportData = {
-      ...result,
-      generatedAt: new Date().toISOString(),
-      report: 'Smart Contract Security Analysis Report'
-    };
-    const baseFileName = result.fileName.replace(/\.[^/.]+$/, ''); // Remove extension
-    downloadJSON(reportData, `${baseFileName}-security-report.json`);
-  };
-
   const handleDownloadPDF = () => {
     generatePDFReport(result);
-  };
-
-  const handleDownloadText = () => {
-    generateTextReport(result);
   };
 
   return (
@@ -66,20 +50,6 @@ export default function AnalysisResults({ result }: AnalysisResultsProps) {
             >
               <FileDown className="w-4 h-4 mr-2" />
               PDF
-            </button>
-            <button
-              onClick={handleDownloadText}
-              className="btn-secondary flex items-center"
-            >
-              <File className="w-4 h-4 mr-2" />
-              Text
-            </button>
-            <button
-              onClick={handleDownloadJSON}
-              className="btn-secondary flex items-center"
-            >
-              <Download className="w-4 h-4 mr-2" />
-              JSON
             </button>
           </div>
         </div>
